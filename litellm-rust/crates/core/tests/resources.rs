@@ -151,3 +151,96 @@ async fn auth_survives_per_call_clients_without_freezing_settings_or_secrets(
     }
     assert_eq!(loader.0.load(Ordering::SeqCst), expected_loads);
 }
+
+#[rstest]
+#[tokio::test]
+async fn configured_client_shares_http_and_secrets_across_routes(resources: CoreResources) {
+    let key = "configured-key";
+    let agent = "configured-agent";
+    let secrets = Arc::new(RecordingSecrets::new([
+        ("ANTHROPIC_API_KEY", key),
+        ("OPENAI_API_KEY", key),
+        ("MISTRAL_API_KEY", key),
+    ]));
+    let client = CoreClient::new(
+        resources,
+        Resolution::from(&HttpSettings {
+            user_agent: Some(agent.into()),
+            ..HttpSettings::default()
+        })
+        .config,
+        secrets.clone(),
+    );
+    let upstream = upstream([
+        json_response(
+            json!({"id":"message", "type":"message", "role":"assistant", "model":"test-model",
+            "content":[], "stop_reason":"end_turn", "usage":{"input_tokens":1,"output_tokens":1}}),
+        ),
+        json_response(json!({"id":"response", "model":"test-model", "output":[]})),
+        json_response(json!({"pages":[]})),
+    ])
+    .await;
+    let body = serde_json::from_value(json!({
+        "model": "anthropic/test-model",
+        "max_tokens": 16,
+        "messages": [{"role": "user", "content": "hi"}]
+    }))
+    .unwrap();
+    client
+        .messages(litellm_core::messages::MessagesCall {
+            body,
+            api_key: None,
+            api_base: Some(upstream.uri()),
+            custom_llm_provider: None,
+            extra_headers: None,
+            provider_specific_header: None,
+            timeout: None,
+            shaping: Default::default(),
+        })
+        .await
+        .unwrap();
+    client
+        .responses(litellm_core::responses::types::ResponsesCall {
+            model: "openai/test-model".into(),
+            input: json!("hi"),
+            optional_params: Default::default(),
+            api_key: None,
+            api_base: Some(upstream.uri()),
+            custom_llm_provider: None,
+            extra_headers: None,
+            timeout: None,
+        })
+        .await
+        .unwrap();
+    client.ocr(decode_request(OcrWireRequest {
+        model: "mistral/test-model".into(),
+        document: json!({"type":"document_url", "document_url":"data:application/pdf;base64,YWJj"}),
+        api_key: None,
+        api_base: Some(upstream.uri()),
+        custom_llm_provider: None,
+        extra_headers: None,
+        optional_params: Default::default(),
+        input_sources: Default::default(),
+        timeout_seconds: None,
+    }).unwrap()).await.unwrap();
+
+    let requests = support::received(&upstream).await;
+    assert_eq!(requests.len(), 3);
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.header("user-agent") == Some(agent))
+    );
+    assert_eq!(requests[0].header("x-api-key"), Some(key));
+    assert!(
+        requests[1..].iter().all(
+            |request| request.header("authorization") == Some(format!("Bearer {key}").as_str())
+        )
+    );
+    let requested = secrets.requested();
+    assert!(
+        ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "MISTRAL_API_KEY"]
+            .iter()
+            .all(|name| requested.iter().any(|requested| requested == name))
+    );
+}
