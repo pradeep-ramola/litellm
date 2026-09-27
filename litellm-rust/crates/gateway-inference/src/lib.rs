@@ -17,12 +17,12 @@ use axum::{Router, routing::post};
 use litellm_core::CoreClient;
 
 pub use error::Error;
-pub use litellm_router::{Deployment, Router as ModelList};
+pub use litellm_router::{Deployment, Router as ModelRouter};
 pub use request::{JsonObject, RequestId};
 
 pub struct Gateway {
     pub core: CoreClient,
-    pub models: ModelList,
+    pub models: ModelRouter,
 }
 
 pub fn router(gateway: Arc<Gateway>) -> Router {
