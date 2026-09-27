@@ -17,6 +17,7 @@ use litellm_core::CoreClient;
 
 pub use error::Error;
 pub use litellm_router::{Deployment, Router as ModelList};
+pub use request::{JsonObject, RequestId};
 
 pub struct Gateway {
     pub core: CoreClient,
@@ -30,11 +31,8 @@ pub fn router(gateway: Arc<Gateway>) -> Router {
         .route("/v1/ocr", post(ocr::create))
         .route("/chat/completions", post(chat_completions::create))
         .route("/v1/chat/completions", post(chat_completions::create))
-        .route("/engines/{*path}", post(chat_completions::deployment))
-        .route(
-            "/openai/deployments/{*path}",
-            post(chat_completions::deployment),
-        )
+        .nest("/engines/{model}", model_routes())
+        .nest("/openai/deployments/{model}", model_routes())
         .route("/audio/transcriptions", post(audio_transcription::create))
         .route(
             "/v1/audio/transcriptions",
@@ -50,4 +48,14 @@ pub fn router(gateway: Arc<Gateway>) -> Router {
             request::MAX_BODY_BYTES,
         ))
         .with_state(gateway)
+}
+
+fn model_routes() -> Router<Arc<Gateway>> {
+    Router::new()
+        .route(
+            "/chat/completions",
+            post(chat_completions::create_from_model_path),
+        )
+        .route("/embeddings", post(request::unsupported))
+        .route("/completions", post(request::unsupported))
 }
