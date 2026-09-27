@@ -79,13 +79,27 @@ where
     }
 }
 
+#[tracing::instrument(name = "litellm.route", skip_all, fields(
+    route = "chat_completions",
+    model = %request.model,
+    provider,
+    resolved_model,
+    stream = false,
+    outcome
+))]
 async fn execute(
     http: Result<litellm_http::Client, litellm_http::Error>,
     auth: &litellm_auth::AuthServices,
     request: ChatCompletionsRequest<'_>,
     hooks: &impl litellm_host::hooks::RouteHooks<Error>,
 ) -> Result<ChatCompletionsResponse, Error> {
-    let http = http?;
-    let prepared = prepare_provider_request(resolve_request(request)?)?;
-    handler::execute(&http, auth, prepared, hooks).await
+    crate::diagnostic::unary(async {
+        let http = http?;
+        let prepared = prepare_provider_request(resolve_request(request)?)?;
+        crate::diagnostic::provider(&prepared.model, &prepared.custom_llm_provider);
+        let execute: futures_util::future::BoxFuture<'_, Result<ChatCompletionsResponse, Error>> =
+            Box::pin(handler::execute(&http, auth, prepared, hooks));
+        execute.await
+    })
+    .await
 }

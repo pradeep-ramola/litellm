@@ -40,6 +40,14 @@ impl<'a, H: RouteHooks<Error>> std::future::IntoFuture
     }
 }
 
+#[tracing::instrument(name = "litellm.route", skip_all, fields(
+    route = "responses",
+    model = %call.model,
+    provider,
+    resolved_model,
+    stream = call.optional_params.get("stream").and_then(serde_json::Value::as_bool).unwrap_or(false),
+    outcome
+))]
 async fn execute(
     http: Result<litellm_http::Client, litellm_http::Error>,
     auth: &litellm_auth::AuthServices,
@@ -47,9 +55,13 @@ async fn execute(
     call: ResponsesCall,
     hooks: &impl RouteHooks<Error>,
 ) -> Result<ResponsesOutput, Error> {
-    let http = http?;
-    let request = prepare::prepare(call, secrets).await?;
-    let execute: futures_util::future::BoxFuture<'_, Result<ResponsesOutput, Error>> =
-        Box::pin(handler::execute(&http, auth, request, hooks));
-    execute.await
+    crate::diagnostic::call(async {
+        let http = http?;
+        let request = prepare::prepare(call, secrets).await?;
+        crate::diagnostic::provider(&request.context.model, &request.context.custom_llm_provider);
+        let execute: futures_util::future::BoxFuture<'_, Result<ResponsesOutput, Error>> =
+            Box::pin(handler::execute(&http, auth, request, hooks));
+        execute.await
+    })
+    .await
 }

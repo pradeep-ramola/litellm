@@ -45,6 +45,14 @@ where
     }
 }
 
+#[tracing::instrument(name = "litellm.route", skip_all, fields(
+    route = "messages",
+    model = %call.body.model,
+    provider,
+    resolved_model,
+    stream = call.body.params.stream == Some(true),
+    outcome
+))]
 async fn execute(
     http: Result<litellm_http::Client, litellm_http::Error>,
     auth: &litellm_auth::AuthServices,
@@ -52,7 +60,13 @@ async fn execute(
     call: MessagesCall,
     hooks: &impl litellm_host::hooks::RouteHooks<Error>,
 ) -> Result<MessagesResponse, Error> {
-    let http = http?;
-    let request = prepare::prepare(call, secrets).await?;
-    handler::execute(&http, auth, request, hooks).await
+    crate::diagnostic::call(async {
+        let http = http?;
+        let request = prepare::prepare(call, secrets).await?;
+        crate::diagnostic::provider(&request.body.model, request.provider.as_str());
+        let execute: futures_util::future::BoxFuture<'_, Result<MessagesResponse, Error>> =
+            Box::pin(handler::execute(&http, auth, request, hooks));
+        execute.await
+    })
+    .await
 }
