@@ -73,14 +73,11 @@ async fn authenticates_before_serving_mounted_inference_routes(
     let address = listener.local_addr().unwrap();
     let (shutdown, stopped) = oneshot::channel();
     let server = tokio::spawn(async move {
-        axum::serve(
-            listener,
-            litellm_gateway::router(inference, &config, None),
-        )
-        .with_graceful_shutdown(async move {
-            let _ = stopped.await;
-        })
-        .await
+        axum::serve(listener, litellm_gateway::router(inference, &config, None))
+            .with_graceful_shutdown(async move {
+                let _ = stopped.await;
+            })
+            .await
     });
 
     let request = client
